@@ -196,6 +196,7 @@ int stream() {
             spdlog::info("Exit called");
             return 0;
         }
+        SDL_PumpEvents();
 
         // Get a buffer
         int rc = ioctl(cameraFD, VIDIOC_DQBUF, &cameraBufferInfo);
