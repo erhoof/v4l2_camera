@@ -12,7 +12,9 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 find_package(SDL2 REQUIRED)
+add_subdirectory(3rdparty/spdlog)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     SDL2::SDL2
+    spdlog
 )
