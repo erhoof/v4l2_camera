@@ -40,7 +40,7 @@ int init() {
     }
     spdlog::info("renderer is created");
 
-    cameraTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_TARGET, WINDOW_WIDTH, WINDOW_HEIGHT);
+    cameraTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_YUY2, SDL_TEXTUREACCESS_STREAMING, WINDOW_WIDTH, WINDOW_HEIGHT);
     if(!cameraTexture) {
         spdlog::critical("failed to create a texture");
         return ERROR_GENERAL;
@@ -59,7 +59,7 @@ void *cameraBuffer;
 struct v4l2_buffer cameraBufferInfo;
 
 int initV4L2() {
-    spdlog::info("Opening %s", DEVICE_NAME);
+    spdlog::info("Opening {}", DEVICE_NAME);
 
     cameraFD = open(DEVICE_NAME, O_RDWR);
     if(cameraFD < 0) {
@@ -89,7 +89,8 @@ int initV4L2() {
         fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         fmt.fmt.pix.width = CAMERA_WIDTH;
         fmt.fmt.pix.height = CAMERA_HEIGHT;
-        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
+        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+        fmt.fmt.pix.colorspace = V4L2_COLORSPACE_DEFAULT;
 
         int rc = ioctl(cameraFD, VIDIOC_S_FMT, &fmt);
         if(rc < 0) {
@@ -131,7 +132,7 @@ int initV4L2() {
             return ERROR_GENERAL;
         }
 
-        spdlog::info("got %d buffers", req.count);
+        spdlog::info("got {} buffers", req.count);
     }
 
     // Map the buffer
@@ -145,7 +146,7 @@ int initV4L2() {
             spdlog::critical("failed to map the buffer, rc: {}", rc);
             return ERROR_GENERAL;
         }
-        spdlog::info("mapped %d buffer");
+        spdlog::info("mapped {} buffer, length: {}", cameraBufferInfo.index, cameraBufferInfo.length);
 
         cameraBuffer = mmap(NULL, cameraBufferInfo.length,
             PROT_READ | PROT_WRITE, MAP_SHARED, cameraFD, cameraBufferInfo.m.offset);
@@ -156,6 +157,7 @@ int initV4L2() {
         spdlog::info("got buffer pointer, {}", cameraBuffer);
     }
 
+    //cameraBuffer = malloc(CAMERA_WIDTH * CAMERA_HEIGHT * 3);
     return 0;
 }
 
@@ -173,9 +175,15 @@ void closeCamera() {
 void closeSDL() {
     spdlog::info("closing sdl");
 
-    SDL_DestroyTexture(cameraTexture);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
+    if(cameraTexture) {
+        SDL_DestroyTexture(cameraTexture);
+    }
+    if(renderer) {
+        SDL_DestroyRenderer(renderer);
+    }
+    if(window) {
+        SDL_DestroyWindow(window);
+    }
     SDL_Quit();
 }
 
@@ -189,7 +197,7 @@ int stream() {
             return 0;
         }
 
-        // Queue a buffer
+        // Get a buffer
         int rc = ioctl(cameraFD, VIDIOC_DQBUF, &cameraBufferInfo);
         if(rc < 0) {
             spdlog::critical("failed to get a frame, rc: {}", rc);
@@ -198,12 +206,12 @@ int stream() {
 
         // Show buffer
         {
-            SDL_UpdateTexture(cameraTexture, NULL, cameraBuffer, CAMERA_WIDTH * 3);
+            SDL_UpdateTexture(cameraTexture, NULL, cameraBuffer, CAMERA_WIDTH * 2);
             SDL_RenderCopy(renderer, cameraTexture, NULL, NULL);
             SDL_RenderPresent(renderer);
         }
 
-        // Requeue the buffer
+        // Get new the buffer
         rc = ioctl(cameraFD, VIDIOC_QBUF, &cameraBufferInfo);
         if(rc < 0) {
             spdlog::critical("failed to release a frame, rc: {}", rc);
@@ -231,7 +239,23 @@ int main() {
         spdlog::critical("failed to initialize a camera, rc: {}", rc);
 
         closeCamera();
+        closeSDL();
         exit(EXIT_FAILURE);
+    }
+
+    /*cameraBufferInfo.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    cameraBufferInfo.memory = V4L2_MEMORY_USERPTR;
+    cameraBufferInfo.length = CAMERA_WIDTH * CAMERA_HEIGHT * 3;
+    cameraBufferInfo.m.userptr = reinterpret_cast<unsigned long>(cameraBuffer);*/
+
+    // get first frame
+    rc = ioctl(cameraFD, VIDIOC_QBUF, &cameraBufferInfo);
+    if(rc < 0) {
+        spdlog::critical("failed to get first frame, rc: {}, {}", rc, strerror(errno));
+
+        closeCamera();
+        closeSDL();
+        return EXIT_FAILURE;
     }
 
     // start stream
@@ -240,6 +264,7 @@ int main() {
         spdlog::critical("failed to start a stream, rc: {}", rc);
 
         closeCamera();
+        closeSDL();
         return EXIT_FAILURE;
     }
 
